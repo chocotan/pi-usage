@@ -97,14 +97,8 @@ interface CacheEntry {
 const fileCache = new Map<string, CacheEntry>();
 const seenIds = new Set<string>();
 
-function parseFile(fp: string): Rec[] {
+function parseData(data: string): Rec[] {
 	const recs: Rec[] = [];
-	let data: string;
-	try {
-		data = fs.readFileSync(fp, "utf8");
-	} catch {
-		return recs;
-	}
 	for (const line of data.split("\n")) {
 		if (!line.includes('"role":"assistant"') || !line.includes('"usage"')) continue;
 		let d: any;
@@ -139,45 +133,98 @@ function parseFile(fp: string): Rec[] {
 	return recs;
 }
 
-export function scanSessions(dir: string): Rec[] {
-	const out: Rec[] = [];
+function parseFile(fp: string): Rec[] {
+	try {
+		return parseData(fs.readFileSync(fp, "utf8"));
+	} catch {
+		return [];
+	}
+}
+
+function listSessionFiles(dir: string): string[] {
+	const files: string[] = [];
 	let projects: fs.Dirent[];
 	try {
 		projects = fs.readdirSync(dir, { withFileTypes: true });
 	} catch {
-		return out;
+		return files;
 	}
 	for (const proj of projects) {
 		if (!proj.isDirectory()) continue;
 		const pdir = path.join(dir, proj.name);
-		let files: string[];
 		try {
-			files = fs.readdirSync(pdir);
+			for (const f of fs.readdirSync(pdir)) {
+				if (f.endsWith(".jsonl")) files.push(path.join(pdir, f));
+			}
+		} catch {
+			// unreadable project dir
+		}
+	}
+	return files;
+}
+
+export function scanSessions(dir: string): Rec[] {
+	const out: Rec[] = [];
+	for (const fp of listSessionFiles(dir)) {
+		let st: fs.Stats;
+		try {
+			st = fs.statSync(fp);
 		} catch {
 			continue;
 		}
-		for (const f of files) {
-			if (!f.endsWith(".jsonl")) continue;
-			const fp = path.join(pdir, f);
-			let st: fs.Stats;
-			try {
-				st = fs.statSync(fp);
-			} catch {
-				continue;
-			}
+		const hit = fileCache.get(fp);
+		if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+			out.push(...hit.recs);
+			continue;
+		}
+		// ponytail: session files are append-only and parseData dedupes by
+		// entry id via seenIds, so re-parsing a changed file yields only new
+		// records — keep the previous ones. Revisit if pi ever rewrites files.
+		const fresh = parseFile(fp);
+		const recs = hit ? [...hit.recs, ...fresh] : fresh;
+		fileCache.set(fp, { mtimeMs: st.mtimeMs, size: st.size, recs });
+		out.push(...recs);
+	}
+	return out;
+}
+
+/**
+ * Async scan: reads files in batches with awaits so the TUI stays responsive
+ * during the multi-second cold scan. onProgress(done, total) after each batch.
+ */
+export async function scanSessionsAsync(
+	dir: string,
+	onProgress?: (done: number, total: number) => void,
+): Promise<Rec[]> {
+	const files = listSessionFiles(dir);
+	const out: Rec[] = [];
+	const BATCH = 16;
+	for (let i = 0; i < files.length; i += BATCH) {
+		const batch = files.slice(i, i + BATCH);
+		const stats = await Promise.all(batch.map((fp) => fs.promises.stat(fp).catch(() => null)));
+		const changed: number[] = [];
+		const perFile: Rec[][] = batch.map((fp, j) => {
+			const st = stats[j];
+			if (!st) return [];
 			const hit = fileCache.get(fp);
-			if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
-				out.push(...hit.recs);
-				continue;
-			}
-			// ponytail: session files are append-only and parseFile dedupes by
-			// entry id via seenIds, so re-parsing a changed file yields only new
-			// records — keep the previous ones. Revisit if pi ever rewrites files.
-			const fresh = parseFile(fp);
+			if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.recs;
+			changed.push(j);
+			return [];
+		});
+		const datas = await Promise.all(
+			changed.map((j) => fs.promises.readFile(batch[j]!, "utf8").catch(() => "")),
+		);
+		changed.forEach((j, k) => {
+			const fp = batch[j]!;
+			const st = stats[j]!;
+			const hit = fileCache.get(fp);
+			const fresh = parseData(datas[k] ?? "");
 			const recs = hit ? [...hit.recs, ...fresh] : fresh;
 			fileCache.set(fp, { mtimeMs: st.mtimeMs, size: st.size, recs });
-			out.push(...recs);
-		}
+			perFile[j] = recs;
+		});
+		for (const recs of perFile) out.push(...recs);
+		onProgress?.(Math.min(i + BATCH, files.length), files.length);
 	}
 	return out;
 }
@@ -221,7 +268,111 @@ export function totals(rows: Agg[]): Agg {
 	return t;
 }
 
+// ---------- calendar heatmap ----------
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const SHADES = ["·", "░", "▒", "▓", "█"];
+
+function mondayOf(d: Date): Date {
+	const n = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+	n.setDate(n.getDate() - ((n.getDay() + 6) % 7));
+	return n;
+}
+
+export interface Calendar {
+	lines: string[]; // month labels + 7 day rows + legend
+	start: string;
+	end: string;
+}
+
+/** GitHub-style heatmap of total tokens/day, weeks as 2-char columns, Mon..Sun rows. */
+export function renderCalendar(map: Map<string, number>, endDate: Date, cols: number): Calendar {
+	const gutter = 4;
+	cols = Math.max(4, cols);
+	const today = new Date();
+	const todayD = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+	const endMon = mondayOf(endDate);
+	const startMon = new Date(endMon);
+	startMon.setDate(startMon.getDate() - 7 * (cols - 1));
+
+	// scale + peak over the visible window
+	let max = 0;
+	let peakKey = "";
+	let windowTotal = 0;
+	for (let w = 0; w < cols; w++) {
+		for (let dow = 0; dow < 7; dow++) {
+			const d = new Date(startMon);
+			d.setDate(d.getDate() + 7 * w + dow);
+			if (d > todayD) continue;
+			const v = map.get(dayKey(d)) ?? 0;
+			windowTotal += v;
+			if (v > max) {
+				max = v;
+				peakKey = dayKey(d);
+			}
+		}
+	}
+	const level = (v: number): number => (v === 0 || max === 0 ? 0 : Math.min(4, 1 + Math.floor((4 * v) / max)));
+
+	// month labels: written when the column's Monday enters a new month
+	const labelRow = new Array<string>(gutter + cols * 2).fill(" ");
+	let lastEnd = 0;
+	let prevMonth = -1;
+	for (let w = 0; w < cols; w++) {
+		const mon = new Date(startMon);
+		mon.setDate(mon.getDate() + 7 * w);
+		const m = mon.getMonth();
+		const pos = gutter + w * 2;
+		if (m !== prevMonth && pos >= lastEnd && pos + 3 <= labelRow.length) {
+			const label = MONTHS[m]!;
+			for (let i = 0; i < 3; i++) labelRow[pos + i] = label[i]!;
+			lastEnd = pos + 4;
+			prevMonth = m;
+		} else if (m !== prevMonth) {
+			prevMonth = m;
+		}
+	}
+
+	const rowLabel = (dow: number): string =>
+		dow === 0 ? "Mon " : dow === 2 ? "Wed " : dow === 4 ? "Fri " : "    ";
+	const lines: string[] = [labelRow.join("").replace(/\s+$/, "")];
+	for (let dow = 0; dow < 7; dow++) {
+		let row = rowLabel(dow);
+		for (let w = 0; w < cols; w++) {
+			const d = new Date(startMon);
+			d.setDate(d.getDate() + 7 * w + dow);
+			if (d > todayD) {
+				row += "  ";
+				continue;
+			}
+			const v = map.get(dayKey(d)) ?? 0;
+			const ch = SHADES[level(v)]!;
+			row += ch + ch;
+		}
+		lines.push(row);
+	}
+	const endSun = new Date(endMon);
+	endSun.setDate(endSun.getDate() + 6);
+	const endD = endSun > todayD ? todayD : endSun;
+	lines.push(
+		`less ${SHADES.join("")} more` +
+			(max > 0 ? ` · peak ${fmtNum(max)} (${peakKey})` : " · no usage") +
+			` · window ${fmtNum(windowTotal)}`,
+	);
+	return { lines, start: dayKey(startMon), end: dayKey(endD) };
+}
+
 // ---------- formatting ----------
+
+/** Total tokens per day (YYYY-MM-DD) — for the calendar heatmap. */
+export function dayTotals(recs: Rec[]): Map<string, number> {
+	const m = new Map<string, number>();
+	for (const r of recs) {
+		const k = dayKey(new Date(r.ts));
+		m.set(k, (m.get(k) ?? 0) + r.t);
+	}
+	return m;
+}
 
 export function fmtNum(n: number): string {
 	if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";

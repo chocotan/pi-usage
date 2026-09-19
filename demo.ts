@@ -8,11 +8,14 @@ import {
 	aggregate,
 	bucketOf,
 	dayKey,
+	dayTotals,
 	defaultSessionsDir,
 	fmtCost,
 	fmtNum,
 	monthKey,
+	renderCalendar,
 	scanSessions,
+	scanSessionsAsync,
 	shiftCursor,
 	totals,
 	weekKey,
@@ -70,6 +73,36 @@ assert.strictEqual(aggregate(recs, "month", "2026-01").length, 3);
 
 console.log("aggregation OK");
 
+// --- calendar heatmap ---
+{
+	const map = new Map<string, number>();
+	const end = new Date(2026, 0, 15); // Thu, week of Jan 12 (Mon)
+	map.set("2026-01-12", 1_000_000);
+	map.set("2026-01-14", 500_000);
+	const c = renderCalendar(map, end, 4);
+	assert.strictEqual(c.lines.length, 1 + 7 + 1, "labels + 7 rows + legend");
+	assert.strictEqual(c.start, "2025-12-22", "4 weeks back from week of Jan 12");
+	const monRow = c.lines[1]!; // Mon row, last cell = Jan 12
+	assert.ok(monRow.endsWith("██"), "Jan 12 = 1M tokens -> max shade");
+	assert.ok(c.lines[3]!.endsWith("▓▓"), "Jan 14 = 500K -> 3/4 shade");
+	assert.ok(c.lines[8]!.includes("peak 1.0M (2026-01-12)"), "legend peak");
+	assert.ok(c.lines[8]!.includes("window 1.5M"), "legend window total");
+	// future days blank: use real today — rows after today's weekday end blank
+	const now = new Date();
+	const todayDow = (now.getDay() + 6) % 7;
+	if (todayDow < 6) {
+		const cur = renderCalendar(map, now, 4);
+		assert.ok(cur.lines[1 + todayDow + 1]!.endsWith("  "), "future cells blank");
+	}
+	// month label present
+	assert.ok(c.lines[0]!.includes("Jan"), "month label");
+	// empty map
+	const empty = renderCalendar(new Map(), end, 4);
+	assert.ok(empty.lines[8]!.includes("no usage"), "empty legend");
+}
+
+console.log("calendar OK");
+
 // --- formatting ---
 assert.strictEqual(fmtNum(999), "999");
 assert.strictEqual(fmtNum(1500), "1.5K");
@@ -99,6 +132,10 @@ if (real.length === 0) {
 	console.log(
 		`scan OK: ${real.length} assistant messages, cold ${ms1}ms, cached ${Date.now() - t1}ms`,
 	);
+	// async scan: same records (responsiveness is covered by the TUI smoke test)
+	const asyncRecs = await scanSessionsAsync(dir);
+	assert.ok(asyncRecs.length >= real.length, "async scan returns records");
+	console.log(`async scan OK: ${asyncRecs.length} records`);
 	const all = aggregate(real, "total", null);
 	console.log(`top: ${all.slice(0, 5).map((a) => `${a.p}/${a.m}=${fmtNum(a.t)}`).join(", ")}`);
 }

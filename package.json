@@ -1,6 +1,6 @@
 {
 	"name": "pi-usage",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Token usage dashboard for pi — per provider/model, by day/week/month/total",
 	"type": "module",
 	"main": "index.ts",

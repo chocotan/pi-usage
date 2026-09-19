@@ -1,6 +1,6 @@
 # pi-usage
 
-Token usage dashboard for [pi](https://github.com/earendil-works/pi-coding-agent) — calls, input/output/cache tokens and cost per **provider + model**, bucketed by **day / ISO week / month / all time**.
+Token usage dashboard for [pi](https://github.com/earendil-works/pi-coding-agent) — calls, input/output/cache tokens and cost per **provider + model**, bucketed by **day / ISO week / month / all time**, plus a **calendar heatmap**.
 
 No hooks, no database, no dependencies: it reads the session files pi already writes to `~/.pi/agent/sessions/**/*.jsonl`.
 
@@ -33,12 +33,23 @@ git clone https://github.com/chocotan/pi-usage ~/.pi/agent/extensions/pi-usage
 /usage week       # current ISO week
 /usage month      # current month
 /usage total      # all time
+/usage cal        # calendar heatmap
+```
+
+Calendar view (`c`):
+
+```
+│    Feb   Mar       Apr     May     Jun       Jul     Aug     Sep       Oct   │
+│Mon ······························································▒▒··░░▒▒▒▒··│
+│Wed ····························································██▒▒░░▒▒░░░░│
+│Fri ·····························································▒▒░░▒▒░░░░░░│
+│less ·░▒▓█ more · peak 991.1M (2026-08-30) · window 11.1B                     │
 ```
 
 | Key | Action |
 |---|---|
-| `d` / `w` / `m` / `t` | switch day / week / month / total view |
-| `←` / `→` | previous / next period (no future travel) |
+| `d` / `w` / `m` / `t` / `c` | switch day / week / month / total / calendar view |
+| `←` / `→` | previous / next period (calendar jumps 4 weeks; no future travel) |
 | `↑` / `↓` or `j` / `k` | scroll |
 | `r` | rescan session files |
 | `q` / `Esc` | close |
@@ -49,7 +60,7 @@ In non-TUI modes (`pi -p "/usage total"`, JSON/RPC) the table is written to stde
 
 Each assistant message in pi's session JSONL carries `provider`, `model`, `timestamp` and `usage` (`input`, `output`, `cacheRead`, `cacheWrite`, `reasoning`, `totalTokens`, `cost`). pi-usage scans those lines (deduplicated by entry id), aggregates per `provider/model` × time bucket, and renders a table.
 
-Session files are append-only, so results are cached by `(path, mtime, size)` — the first scan of a large history takes a few seconds, later opens/rescans are instant.
+Session files are append-only, so results are cached by `(path, mtime, size)` — later opens/rescans only re-parse changed files. Scanning runs in async batches with live progress, so the TUI never freezes even on a multi-year history.
 
 `Cost` shows `-` when providers don't report pricing in the session data.
 
