@@ -1,10 +1,31 @@
 {
-	"name": "pi-usage",
+	"name": "@chocotan/pi-usage",
 	"version": "0.2.0",
 	"description": "Token usage dashboard for pi — per provider/model, by day/week/month/total",
 	"type": "module",
 	"main": "index.ts",
 	"license": "MIT",
-	"keywords": ["pi", "pi-coding-agent", "extension", "usage", "tokens", "stats"],
+	"keywords": [
+		"pi-package",
+		"pi",
+		"pi-coding-agent",
+		"extension",
+		"usage",
+		"tokens",
+		"stats"
+	],
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"files": [
+		"index.ts",
+		"stats.ts"
+	],
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
+	},
 	"repository": "https://github.com/chocotan/pi-usage"
 }
