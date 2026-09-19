@@ -1,0 +1,42 @@
+{
+  "storeId": "17ecb1ec-b313-486a-9c8a-26045f51cf2f",
+  "nextId": 4,
+  "tasks": [
+    {
+      "id": "1",
+      "subject": "实现 pi-usage 扩展（scanner/aggregator/TUI）",
+      "description": "在 /home/choco/Downloads/pi-usage 实现扩展：扫描 ~/.pi/agent/sessions/**/*.jsonl，聚合 provider/model × day/week/month/total，registerCommand(\"usage\") + ctx.ui.custom 表格组件，d/w/m/t 切换，←→翻页，↑↓滚动，r刷新，q退出。",
+      "status": "completed",
+      "activeForm": "实现 pi-usage 扩展",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1789817852490,
+      "updatedAt": 1789819484182
+    },
+    {
+      "id": "2",
+      "subject": "自测扩展",
+      "description": "demo() 自校验脚本跑真实 sessions 目录断言聚合正确；pi -p 加载扩展验证无报错。",
+      "status": "completed",
+      "activeForm": "自测扩展",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1789817852490,
+      "updatedAt": 1789819484190
+    },
+    {
+      "id": "3",
+      "subject": "发布到 GitHub 公共仓库",
+      "description": "README、LICENSE(MIT)、.gitignore，gh repo create --public 并 push。",
+      "status": "in_progress",
+      "activeForm": "发布到 GitHub",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1789817852490,
+      "updatedAt": 1789819484182
+    }
+  ]
+}
